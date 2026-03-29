@@ -1,6 +1,8 @@
 """PDF generation plugin using WeasyPrint."""
 
+import contextlib
 import html
+import io
 import re
 from pathlib import Path
 
@@ -30,6 +32,24 @@ class PdfPlugin(Plugin):
                     "System dependencies (Ubuntu): apt install libpango-1.0-0 libharfbuzz0b libpangoft2-1.0-0"
                 ) from e
         return self._weasyprint
+
+    def check_dependencies(self):
+        """Validate that WeasyPrint and its native dependencies are available."""
+        stderr_buffer = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(stderr_buffer):
+                _ = self.weasyprint
+        except ImportError:
+            raise
+        except OSError as e:
+            raise RuntimeError(
+                "WeasyPrint is installed, but required native libraries are missing.\n"
+                "On macOS, try:\n"
+                "  brew install weasyprint\n"
+                "If the problem persists, also install:\n"
+                "  brew install cairo pango gdk-pixbuf libffi\n"
+                f"\nOriginal error: {e}"
+            ) from e
 
     def generate(
         self,

@@ -349,6 +349,12 @@ def create_server(host: str = "localhost", port: int = 8000) -> HTTPServer:
     return server
 
 
+def validate_startup_dependencies():
+    """Validate required runtime dependencies before starting the server."""
+    kernel = create_default_kernel()
+    kernel["pdf"].check_dependencies()
+
+
 def run_server(host: str = "localhost", port: int = 8000):
     """Start the HTTP server."""
     server = create_server(host, port)
