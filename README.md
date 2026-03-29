@@ -38,11 +38,24 @@ docker compose up -d
 
 ### Python
 
+Using `venv`:
+
 ```bash
 git clone https://github.com/mosaibah/oreilly-downloader.git
 cd oreilly-downloader
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+python main.py
+```
+
+Using `uv`:
+
+```bash
+git clone https://github.com/mosaibah/oreilly-downloader.git
+cd oreilly-downloader
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
 python main.py
 ```
 

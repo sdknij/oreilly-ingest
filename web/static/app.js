@@ -8,6 +8,8 @@ let currentExpandedCard = null;
 let selectedResultIndex = -1;
 let defaultOutputDir = '';
 const chaptersCache = {};
+const DEFAULT_COOKIE_COMMAND = "JSON.stringify(document.cookie.split(';').map(c=>c.split('=')).reduce((r,[k,v])=>({...r,[k.trim()]:v?.trim()}),{}))";
+const SAFARI_COOKIE_COMMAND = "copy(JSON.stringify(document.cookie.split(';').map(c=>c.split('=')).reduce((r,[k,v])=>({...r,[k.trim()]:v?.trim()}),{})))";
 
 /**
  * Get high-resolution cover URL for expanded view.
@@ -15,6 +17,31 @@ const chaptersCache = {};
  */
 function getHighResCoverUrl(bookId) {
     return `https://learning.oreilly.com/covers/urn:orm:book:${bookId}/400w/`;
+}
+
+function isSafariBrowser() {
+    const ua = navigator.userAgent;
+    return /Safari\//.test(ua) && !/Chrome\/|Chromium\/|Edg\//.test(ua);
+}
+
+function configureCookieInstructions() {
+    const commandEl = document.getElementById('cookie-command');
+    const copyHintEl = document.getElementById('cookie-copy-hint');
+    const consoleStepEl = document.getElementById('cookie-console-step');
+
+    if (!commandEl || !copyHintEl || !consoleStepEl) {
+        return;
+    }
+
+    if (isSafariBrowser()) {
+        consoleStepEl.innerHTML = 'Open Safari JavaScript Console <kbd class="px-1.5 py-0.5 bg-zinc-100 rounded text-xs font-mono">Option-Command-C</kbd>';
+        commandEl.textContent = SAFARI_COOKIE_COMMAND;
+        copyHintEl.textContent = 'Safari copies the JSON to your clipboard automatically. Paste it below.';
+        return;
+    }
+
+    commandEl.textContent = DEFAULT_COOKIE_COMMAND;
+    copyHintEl.textContent = 'Copy the output and paste below:';
 }
 
 async function checkAuth() {
@@ -981,6 +1008,8 @@ function updateSelectedResult() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    configureCookieInstructions();
+
     // Auth
     checkAuth();
     loadDefaultOutputDir();
