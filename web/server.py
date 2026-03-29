@@ -1,6 +1,7 @@
 """Web server for O'Reilly Ingest."""
 
 import json
+import logging
 import re
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
@@ -12,6 +13,8 @@ from plugins import ChunkConfig
 from plugins.downloader import DownloadProgress
 import config
 
+logger = logging.getLogger("oreilly_ingest")
+
 
 class DownloaderHandler(SimpleHTTPRequestHandler):
     """HTTP request handler for the downloader web interface."""
@@ -20,6 +23,7 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
     download_progress: dict = {}
     _progress_lock = threading.Lock()
     _cancel_requested: bool = False
+    _last_logged_progress: tuple | None = None
 
     @classmethod
     def _set_progress(cls, data: dict):
@@ -81,6 +85,7 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
     def _handle_status(self):
         auth = self.kernel["auth"]
         status = auth.get_status()
+        logger.info("Auth status checked: valid=%s reason=%s", status.get("valid"), status.get("reason"))
         self._send_json(status)
 
     def _handle_search(self, query: str):
@@ -90,14 +95,17 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
 
         book = self.kernel["book"]
         results = book.search(query)
+        logger.info("Search completed for query=%r with %d result(s)", query, len(results))
         self._send_json({"results": results})
 
     def _handle_book_info(self, book_id: str):
         book = self.kernel["book"]
         try:
             info = book.fetch(book_id)
+            logger.info("Loaded book metadata for book_id=%s", book_id)
             self._send_json(info)
         except Exception as e:
+            logger.error("Failed to load book metadata for book_id=%s: %s", book_id, e)
             self._send_json({"error": str(e)}, 400)
 
     def _handle_chapters_list(self, book_id: str):
@@ -105,6 +113,7 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
         chapters_plugin = self.kernel["chapters"]
         try:
             chapters = chapters_plugin.fetch_list(book_id)
+            logger.info("Loaded %d chapter(s) for book_id=%s", len(chapters), book_id)
             result = {
                 "chapters": [
                     {
@@ -119,6 +128,7 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
             }
             self._send_json(result)
         except Exception as e:
+            logger.error("Failed to load chapters for book_id=%s: %s", book_id, e)
             self._send_json({"error": str(e)}, 400)
 
     def _handle_progress(self):
@@ -173,14 +183,17 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
     def _handle_cookies(self, data: dict):
         """Save cookies from user input."""
         if not isinstance(data, dict) or not data:
+            logger.warning("Rejected invalid cookie payload")
             self._send_json({"error": "Invalid cookie data"}, 400)
             return
 
         try:
             config.COOKIES_FILE.write_text(json.dumps(data, indent=2))
             self.kernel.http.reload_cookies()
+            logger.info("Saved %d cookie(s) to %s", len(data), config.COOKIES_FILE)
             self._send_json({"success": True})
         except Exception as e:
+            logger.error("Failed to save cookies: %s", e)
             self._send_json({"error": str(e)}, 500)
 
     def _handle_cancel(self):
@@ -189,20 +202,24 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
             status = self.download_progress.get("status")
             if status and status not in ("completed", "error", "cancelled"):
                 DownloaderHandler._cancel_requested = True
+                logger.warning("Cancellation requested for active download")
                 self._send_json({"success": True, "message": "Cancel requested"})
             else:
+                logger.info("Cancellation requested but no active download was running")
                 self._send_json({"success": False, "message": "No active download"})
 
     def _handle_reveal(self, data: dict):
         """Open file manager and select the specified file."""
         path_str = data.get("path", "")
         if not path_str:
+            logger.warning("Reveal request rejected: missing path")
             self._send_json({"error": "path required"}, 400)
             return
 
         path = Path(path_str).resolve()
 
         if not path.exists():
+            logger.warning("Reveal request rejected: path does not exist: %s", path)
             self._send_json({"error": "Path does not exist"}, 404)
             return
 
@@ -210,21 +227,23 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
         success = system_plugin.reveal_in_file_manager(path)
 
         if success:
+            logger.info("Revealed path in file manager: %s", path)
             self._send_json({"success": True})
         else:
+            logger.error("Failed to reveal path in file manager: %s", path)
             self._send_json({"error": "Failed to reveal file"}, 500)
 
     def _handle_download(self, data: dict):
         """Start a book download."""
         book_id = data.get("book_id")
         output_format = data.get("format", "epub")
-        print(f"[DEBUG] Received format from request: '{output_format}' (raw data: {data.get('format')})")
         selected_chapters = data.get("chapters")
         output_dir_str = data.get("output_dir")
         chunking_opts = data.get("chunking", {})
         skip_images = data.get("skip_images", False)
 
         if not book_id:
+            logger.warning("Download request rejected: missing book_id")
             self._send_json({"error": "book_id required"}, 400)
             return
 
@@ -244,6 +263,7 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
         if output_dir_str:
             success, message, output_dir = output_plugin.validate_dir(output_dir_str)
             if not success:
+                logger.error("Download request rejected for book_id=%s: invalid output dir: %s", book_id, message)
                 self._send_json({"error": message}, 400)
                 return
         else:
@@ -253,13 +273,22 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
         with self._progress_lock:
             status = self.download_progress.get("status")
             if status and status not in ("completed", "error", "cancelled"):
+                logger.warning("Download request rejected for book_id=%s: another download is already in progress", book_id)
                 self._send_json({"error": "Download already in progress"}, 409)
                 return
 
         # Parse formats using plugin (single source of truth)
         from plugins.downloader import DownloaderPlugin
         formats = DownloaderPlugin.parse_formats(output_format)
-        print(f"[DEBUG] Parsed formats: {formats}")
+        chapter_count = len(selected_chapters) if isinstance(selected_chapters, list) else "all"
+        logger.info(
+            "Starting download for book_id=%s formats=%s chapters=%s output_dir=%s skip_images=%s",
+            book_id,
+            ",".join(formats),
+            chapter_count,
+            output_dir,
+            skip_images,
+        )
 
         # Start download in background thread
         thread = threading.Thread(
@@ -307,12 +336,20 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
                     **result.files,
                 }
             )
+            logger.info(
+                "Download completed for book_id=%s title=%r files=%s",
+                result.book_id,
+                result.title,
+                ",".join(sorted(result.files.keys())),
+            )
         except Exception as e:
             error_msg = str(e)
             if "cancelled" in error_msg.lower():
                 self._set_progress({"status": "cancelled", "error": error_msg})
+                logger.warning("Download cancelled for book_id=%s", book_id)
             else:
                 self._set_progress({"status": "error", "error": error_msg})
+                logger.error("Download failed for book_id=%s: %s", book_id, error_msg)
 
     def _on_progress(self, progress: DownloadProgress):
         """Handle progress updates from the downloader plugin."""
@@ -328,6 +365,32 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
                 "chapter_title": progress.chapter_title,
             }
         )
+        progress_key = (
+            progress.status,
+            progress.percentage,
+            progress.current_chapter,
+            progress.total_chapters,
+            progress.chapter_title,
+            progress.message,
+        )
+        if progress_key != self._last_logged_progress:
+            self._last_logged_progress = progress_key
+            suffix = ""
+            if progress.total_chapters:
+                suffix = f" ({progress.current_chapter}/{progress.total_chapters})"
+            extras = []
+            if progress.chapter_title:
+                extras.append(progress.chapter_title)
+            if progress.message:
+                extras.append(progress.message)
+            extra_text = f" - {' | '.join(extras)}" if extras else ""
+            logger.info(
+                "Download progress: %s%% %s%s%s",
+                progress.percentage,
+                progress.status,
+                suffix,
+                extra_text,
+            )
 
     def _send_json(self, data: dict, status: int = 200):
         self.send_response(status)
@@ -337,7 +400,10 @@ class DownloaderHandler(SimpleHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode())
 
     def log_message(self, format, *args):
-        print(f"[HTTP] {args[0]}")
+        request_line = args[0] if args else ""
+        if "/api/progress" in request_line:
+            return
+        logger.info("HTTP %s", request_line)
 
 
 def create_server(host: str = "localhost", port: int = 8000) -> HTTPServer:
@@ -358,5 +424,5 @@ def validate_startup_dependencies():
 def run_server(host: str = "localhost", port: int = 8000):
     """Start the HTTP server."""
     server = create_server(host, port)
-    print(f"Server running at http://{host}:{port}")
+    logger.info("Server running at http://%s:%s", host, port)
     server.serve_forever()

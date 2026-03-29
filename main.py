@@ -2,11 +2,22 @@
 """O'Reilly Downloader - Main Entry Point"""
 
 import argparse
+import logging
 import sys
 from web.server import run_server, validate_startup_dependencies
 
 
+def configure_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+
 def main():
+    configure_logging()
+
     parser = argparse.ArgumentParser(description="O'Reilly Book Downloader")
     parser.add_argument("--host", default="localhost", help="Server host")
     parser.add_argument("--port", type=int, default=8000, help="Server port")
