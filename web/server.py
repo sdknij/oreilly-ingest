@@ -425,4 +425,7 @@ def run_server(host: str = "localhost", port: int = 8000):
     """Start the HTTP server."""
     server = create_server(host, port)
     logger.info("Server running at http://%s:%s", host, port)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()

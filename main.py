@@ -17,6 +17,7 @@ def configure_logging():
 
 def main():
     configure_logging()
+    logger = logging.getLogger("oreilly_ingest")
 
     parser = argparse.ArgumentParser(description="O'Reilly Book Downloader")
     parser.add_argument("--host", default="localhost", help="Server host")
@@ -38,7 +39,10 @@ def main():
     print("  Press Ctrl+C to stop\n")
     print("=" * 50)
 
-    run_server(args.host, args.port)
+    try:
+        run_server(args.host, args.port)
+    except KeyboardInterrupt:
+        logger.info("Shutting down O'Reilly Downloader")
 
 
 if __name__ == "__main__":
