@@ -4,7 +4,6 @@
 import argparse
 import logging
 import sys
-from web.server import run_server, validate_startup_dependencies
 
 
 def configure_logging():
@@ -13,6 +12,20 @@ def configure_logging():
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+def print_startup_error(exc: Exception):
+    print("ERROR: Unable to start O'Reilly Downloader.", file=sys.stderr)
+    print(file=sys.stderr)
+    print(str(exc), file=sys.stderr)
+
+    if isinstance(exc, ModuleNotFoundError):
+        missing = exc.name or "a required package"
+        print(file=sys.stderr)
+        print(f"Missing Python dependency: {missing}", file=sys.stderr)
+        print("Install dependencies with one of:", file=sys.stderr)
+        print("  uv pip install -r requirements.txt", file=sys.stderr)
+        print("  pip install -r requirements.txt", file=sys.stderr)
 
 
 def main():
@@ -25,11 +38,11 @@ def main():
     args = parser.parse_args()
 
     try:
+        from web.server import run_server, validate_startup_dependencies
+
         validate_startup_dependencies()
     except (ImportError, RuntimeError) as exc:
-        print("ERROR: Unable to start O'Reilly Downloader.", file=sys.stderr)
-        print(file=sys.stderr)
-        print(str(exc), file=sys.stderr)
+        print_startup_error(exc)
         sys.exit(1)
 
     print("=" * 50)
